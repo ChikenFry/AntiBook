@@ -15,9 +15,18 @@ from dotenv import load_dotenv
 load_dotenv("../.env")
 app = FastAPI()
 
-# Database Setup
+# Manual Circuit Breaker: Set to True to bypass Gemini AI and use Heuristics exclusively
+DISABLE_AI_FOR_FEED = True 
+
+# Database Setup & Migration
 conn = sqlite3.connect("feed.db")
-conn.execute("CREATE TABLE IF NOT EXISTS feed_hooks (id INTEGER PRIMARY KEY, book_id TEXT, hook TEXT, paragraph TEXT, anchor_text TEXT)")
+conn.execute("CREATE TABLE IF NOT EXISTS feed_hooks (id INTEGER PRIMARY KEY, book_id TEXT, hook TEXT, paragraph TEXT, paragraph_id TEXT)")
+# Migration: Add paragraph_id col if an older DB exists without it
+try:
+    conn.execute("ALTER TABLE feed_hooks ADD COLUMN paragraph_id TEXT")
+except sqlite3.OperationalError:
+    # Column already exists
+    pass
 conn.commit()
 conn.close()
 
@@ -41,7 +50,7 @@ def internalHeuristicGenerator(paragraph: str, paragraph_id: str):
     best_sentence = sentences[0]
     max_score = -1
     
-    keywords = ['never', 'always', 'secret', 'imagine', 'true', 'reasons', 'impossible', 'truth']
+    keywords = ['secret', 'imagine', 'true', 'reasons', 'impossible', 'truth', 'revelation', 'unexpected', 'hidden']
     
     for sentence in sentences:
         score = 0
@@ -81,52 +90,61 @@ def generate_hooks_bg(book_id: str, markdown_text: str):
 
 Format strictly as JSON array of objects:
 [
-  {"hook": "...", "paragraph": "...", "anchor_text": "..."}
+  {"hook": "...", "paragraph": "...", "paragraph_id": "..."}
 ]
 
 Text:
 """ + markdown_text[:80000]
 
     try:
-        # Step A: Primary - Execute Gemini API call (gemini-flash) with retry/backoff logic
-        max_retries = 4
+        # Step A: Primary AI Path (Skip if circuit breaker is active)
         success = False
         data = []
 
-        for attempt in range(max_retries):
-            try:
-                response = client.models.generate_content(
-                    model='gemini-1.5-flash',
-                    contents=prompt,
-                )
-                raw = response.text.replace("```json", "").replace("```", "").strip()
-                data = json.loads(raw)
-                success = True
-                print(f"Step A Success: AI generated {len(data)} hooks.")
-                break
-            except Exception as e:
-                error_str = str(e)
-                # Handle model naming inconsistencies if needed
-                if "404" in error_str and "gemini-1.5-flash" in error_str:
-                    print("Falling back to auto-detected flash model...")
-                    models = client.models.list()
-                    fallback = next((m.name for m in models if 'flash' in m.name), 'models/gemini-pro')
+        if not DISABLE_AI_FOR_FEED:
+            max_retries = 4
+            for attempt in range(max_retries):
+                try:
                     response = client.models.generate_content(
-                        model=fallback.replace("models/", ""),
+                        model='gemini-3-flash',
                         contents=prompt,
                     )
                     raw = response.text.replace("```json", "").replace("```", "").strip()
                     data = json.loads(raw)
                     success = True
+                    print(f"Step A Success: AI generated {len(data)} hooks using gemini-3-flash.")
                     break
+                except Exception as e:
+                    error_str = str(e)
+                    # Handle model naming inconsistencies or fallback
+                    if "404" in error_str:
+                        print("gemini-3-flash not found or quota hit. Attempting fallback to other flash models...")
+                        models = client.models.list()
+                        available = [m.name for m in models]
+                        print(f"Available: {available}")
+                        fallback = next((m.name for m in models if 'flash' in m.name), 'models/gemini-1.5-flash')
+                        try:
+                            response = client.models.generate_content(
+                                model=fallback.replace("models/", ""),
+                                contents=prompt,
+                            )
+                            raw = response.text.replace("```json", "").replace("```", "").strip()
+                            data = json.loads(raw)
+                            success = True
+                            print(f"Fallback Success: Used {fallback}")
+                            break
+                        except:
+                            pass
 
-                if ("503" in error_str or "429" in error_str) and attempt < max_retries - 1:
-                    wait_time = (2 ** attempt) + 2
-                    print(f"API Capacity Error ({error_str[:3]}). Retrying in {wait_time}s...")
-                    time.sleep(wait_time)
-                else:
-                    print(f"Step A Failed: {error_str}")
-                    break
+                    if ("503" in error_str or "429" in error_str) and attempt < max_retries - 1:
+                        wait_time = (2 ** attempt) + 2
+                        print(f"API Capacity Error ({error_str[:3]}). Retrying in {wait_time}s...")
+                        time.sleep(wait_time)
+                    else:
+                        print(f"Step A Failed: {error_str}")
+                        break
+        else:
+            print("Circuit Breaker Active: Skipping AI call.")
         
         # Step B: Fallback - If API call fails, immediate call internalHeuristicGenerator
         if not success:
@@ -138,26 +156,28 @@ Text:
             data = []
             for p in candidates:
                 result = internalHeuristicGenerator(p, book_id)
-                # Format for DB consistency (mapping paragraph_id/book_id and generating anchor_text)
+                # Format for DB consistency using unified schema
                 data.append({
                     "hook": result["hook"],
                     "paragraph": result["paragraph"],
-                    "anchor_text": result["paragraph"][:30].strip()
+                    "paragraph_id": result["paragraph"][:30].strip()
                 })
             print(f"Step B Success: Generated {len(data)} heuristic hooks.")
 
-        # Step C: Persistence - Save the resulting JSON object into the FeedHooks collection
+        # Step C: Persistence - Save outcomes into the FeedHooks collection using a unified JSON schema
         if data:
             conn = sqlite3.connect('feed.db')
             c = conn.cursor()
             for item in data:
+                # Ensure we handle both potential key names during transition or extraction
+                p_id = item.get('paragraph_id') or item.get('anchor_text') or item.get('paragraph', '')[:30].strip()
                 c.execute('''
-                    INSERT INTO feed_hooks (book_id, hook, paragraph, anchor_text)
+                    INSERT INTO feed_hooks (book_id, hook, paragraph, paragraph_id)
                     VALUES (?, ?, ?, ?)
-                ''', (book_id, item['hook'], item['paragraph'], item['anchor_text']))
+                ''', (book_id, item['hook'], item['paragraph'], p_id))
             conn.commit()
             conn.close()
-            print(f"Step C Success: Saved hooks for {book_id} to database.")
+            print(f"Step C Success: Saved {len(data)} hooks for {book_id} to database.")
         
     except Exception as e:
         print(f"Pipeline Failure: {str(e)}")
@@ -199,7 +219,15 @@ async def extract_pdf(background_tasks: BackgroundTasks, book_id: str = Form(...
 
 @app.get("/feed")
 def get_feed():
-    with sqlite3.connect("feed.db") as c:
-        c.row_factory = sqlite3.Row
+    with sqlite3.connect("feed.db") as conn:
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
         rows = c.execute("SELECT * FROM feed_hooks").fetchall()
-        return [{"id": r["id"], "book_id": r["book_id"], "hook": r["hook"], "paragraph": r["paragraph"], "anchor_text": r["anchor_text"]} for r in rows]
+        
+        return [{
+            "id": dict(r).get("id"),
+            "book_id": dict(r).get("book_id"),
+            "hook": dict(r).get("hook", "Hook pending..."),
+            "paragraph": dict(r).get("paragraph", "Content unavailable."),
+            "paragraph_id": dict(r).get("paragraph_id")
+        } for r in rows]

@@ -51,7 +51,7 @@ export default function FeedScreen() {
         height={height - 160}
         data={[
           { type: 'hook', text: item.hook },
-          { type: 'paragraph', text: item.paragraph, anchor: item.anchor_text, book_id: item.book_id }
+          { type: 'paragraph', text: item.paragraph, paragraph_id: item.paragraph_id, book_id: item.book_id }
         ]}
         scrollAnimationDuration={500}
         renderItem={({ item: slideItem }) => (
@@ -68,7 +68,7 @@ export default function FeedScreen() {
                   </ScrollView>
                   <Pressable 
                     style={styles.readMoreBtn}
-                    onPress={() => router.push({ pathname: '/reader', params: { id: slideItem.book_id, anchor: slideItem.anchor }})}
+                    onPress={() => router.push({ pathname: '/reader', params: { id: slideItem.book_id, paragraph_id: slideItem.paragraph_id }})}
                   >
                      <Text style={styles.readMoreText}>Read More in Book</Text>
                   </Pressable>
@@ -76,6 +76,10 @@ export default function FeedScreen() {
              )}
           </View>
         )}
+        panGestureHandlerProps={{
+          activeOffsetY: [-10, 10],
+          failOffsetX: [-10, 10],
+        }}
       />
     );
   };

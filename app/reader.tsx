@@ -8,7 +8,7 @@ import Markdown from 'react-native-markdown-display';
 
 export default function ReaderScreen() {
   const router = useRouter();
-  const { id, anchor } = useLocalSearchParams();
+  const { id, paragraph_id } = useLocalSearchParams();
   const { books } = useLibrary();
   const scrollViewRef = useRef<ScrollView>(null);
   const yOffsets = useRef<Record<string, number>>({});
@@ -16,7 +16,7 @@ export default function ReaderScreen() {
 
   const [totalPages, setTotalPages] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
-  const [isReadingMode, setIsReadingMode] = useState(!!anchor);
+  const [isReadingMode, setIsReadingMode] = useState(!!paragraph_id);
 
   // Responsive Text Engine Values
   const [fontSizeMultiplier, setFontSizeMultiplier] = useState(1);
@@ -146,9 +146,9 @@ export default function ReaderScreen() {
                             const chunk = rawText.substring(0, 30).trim();
                             yOffsets.current[chunk] = y;
                             
-                            // Native UI feed anchor routing support
-                            if (typeof anchor === 'string') {
-                                if (rawText.startsWith(anchor) || rawText.includes(anchor)) {
+                            // Native UI feed paragraph_id routing support
+                            if (typeof paragraph_id === 'string') {
+                                if (rawText.startsWith(paragraph_id) || rawText.includes(paragraph_id)) {
                                     setTimeout(() => {
                                       scrollViewRef.current?.scrollTo({ y, animated: true });
                                     }, 100);
