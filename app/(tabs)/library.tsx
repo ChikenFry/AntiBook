@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
 import { Plus, BookOpen } from 'lucide-react-native';
 import { useLibrary } from '../../lib/LibraryContext';
 
@@ -25,12 +26,24 @@ export default function LibraryScreen() {
           return;
         }
         const newBookId = Math.random().toString(36).substr(2, 9);
-        
+
+        // Copy PDF to permanent document directory so the URI survives app restarts.
+        // Sanitize file.name to prevent path traversal via dangerous characters.
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        let bookUri = file.uri;
+        const permanentUri = FileSystem.documentDirectory + newBookId + '_' + safeName;
+        try {
+          await FileSystem.copyAsync({ from: file.uri, to: permanentUri });
+          bookUri = permanentUri;
+        } catch {
+          // Keep original URI if copy fails
+        }
+
         // Add skeleton
         addBook({
           id: newBookId,
           title: file.name,
-          uri: file.uri,
+          uri: bookUri,
         });
 
         // Background parse via Localhost Python Backend
