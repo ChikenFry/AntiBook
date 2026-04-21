@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, Dimensions, ActivityIndicator, Pressable, ScrollView } from 'react-native';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import Carousel from 'react-native-reanimated-carousel';
+import { View, Text, StyleSheet, Dimensions, ActivityIndicator, Pressable, ScrollView, FlatList } from 'react-native';
 import { useRouter } from 'expo-router';
 
 const { width, height } = Dimensions.get('window');
@@ -44,56 +42,58 @@ export default function FeedScreen() {
     )
   }
 
-  const renderFeedItem = ({ item }: { item: any }) => {
-    return (
-      // Horizontal paging ScrollView replaces the inner Carousel.
-      // A plain ScrollView only claims horizontal swipe gestures, so the
-      // outer vertical Carousel can freely handle up/down swipes.
-      <ScrollView
-        horizontal
-        pagingEnabled
-        showsHorizontalScrollIndicator={false}
-        scrollEventThrottle={16}
-        style={{ width, height: height - 160 }}
-      >
-        {/* Slide 1: Hook */}
-        <View style={[styles.slideContainer, { width }]}>
-          <View style={styles.hookWrapper}>
-            <Text style={styles.hookLabel}>SWIPE FOR CONTEXT ➡️</Text>
-            <Text style={styles.hookText}>"{item.hook}"</Text>
-          </View>
+  const renderFeedItem = ({ item }: { item: any }) => (
+    // Horizontal ScrollView for hook → paragraph swiping.
+    // Being a native scroll component, it only intercepts horizontal gestures,
+    // allowing the outer vertical FlatList to freely handle up/down swipes.
+    <ScrollView
+      horizontal
+      pagingEnabled
+      showsHorizontalScrollIndicator={false}
+      style={{ width, height: height - 160 }}
+    >
+      {/* Slide 1: Hook */}
+      <View style={[styles.slideContainer, { width }]}>
+        <View style={styles.hookWrapper}>
+          <Text style={styles.hookLabel}>SWIPE FOR CONTEXT ➡️</Text>
+          <Text style={styles.hookText}>"{item.hook}"</Text>
         </View>
+      </View>
 
-        {/* Slide 2: Paragraph + Read More */}
-        <View style={[styles.slideContainer, { width }]}>
-          <View style={styles.paragraphWrapper}>
-            <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
-              <Text style={styles.paragraphText}>{item.paragraph}</Text>
-            </ScrollView>
-            <Pressable
-              style={styles.readMoreBtn}
-              onPress={() => router.push({ pathname: '/reader', params: { id: item.book_id, anchor: item.anchor_text } })}
-            >
-              <Text style={styles.readMoreText}>Read More in Book</Text>
-            </Pressable>
-          </View>
+      {/* Slide 2: Paragraph + Read More */}
+      <View style={[styles.slideContainer, { width }]}>
+        <View style={styles.paragraphWrapper}>
+          <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
+            <Text style={styles.paragraphText}>{item.paragraph}</Text>
+          </ScrollView>
+          <Pressable
+            style={styles.readMoreBtn}
+            onPress={() => router.push({ pathname: '/reader', params: { id: item.book_id, paragraph_id: item.paragraph_id } })}
+          >
+            <Text style={styles.readMoreText}>Read More in Book</Text>
+          </Pressable>
         </View>
-      </ScrollView>
-    );
-  };
+      </View>
+    </ScrollView>
+  );
 
   return (
-    <GestureHandlerRootView style={styles.container}>
-      <Carousel
-        loop={false}
-        vertical
-        width={width}
-        height={height - 160}
-        data={[...feed].reverse()}
-        scrollAnimationDuration={500}
-        renderItem={renderFeedItem}
-      />
-    </GestureHandlerRootView>
+    // Native FlatList with pagingEnabled for vertical feed scrolling.
+    // Using a native component (instead of gesture-handler-based Carousel)
+    // eliminates gesture conflicts with the inner horizontal ScrollView.
+    <FlatList
+      data={[...feed].reverse()}
+      keyExtractor={(item) => String(item.id)}
+      renderItem={renderFeedItem}
+      pagingEnabled
+      showsVerticalScrollIndicator={false}
+      style={styles.container}
+      getItemLayout={(_, index) => ({
+        length: height - 160,
+        offset: (height - 160) * index,
+        index,
+      })}
+    />
   );
 }
 
