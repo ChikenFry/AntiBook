@@ -5,12 +5,13 @@ export type Book = {
   title: string;
   uri: string;
   text?: string;
+  page_anchors?: Record<string, string>;
 };
 
 type LibraryContextType = {
   books: Book[];
   addBook: (book: Book) => void;
-  updateBookText: (id: string, text: string) => void;
+  updateBookText: (id: string, text: string, page_anchors?: Record<string, string>) => void;
 };
 
 const LibraryContext = createContext<LibraryContextType>({
@@ -28,9 +29,9 @@ export const LibraryProvider = ({ children }: { children: ReactNode }) => {
     setBooks(prev => [...prev, book]);
   };
 
-  const updateBookText = (id: string, text: string) => {
+  const updateBookText = (id: string, text: string, page_anchors?: Record<string, string>) => {
     setBooks(prev =>
-      prev.map(b => (b.id === id ? { ...b, text } : b))
+      prev.map(b => (b.id === id ? { ...b, text, page_anchors } : b))
     );
   };
 

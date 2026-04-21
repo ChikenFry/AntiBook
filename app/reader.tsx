@@ -1,19 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, StyleSheet, Dimensions, Pressable, ScrollView, Image } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useLibrary } from '../lib/LibraryContext';
 import Pdf from 'react-native-pdf';
-import { BookOpen, FileText, ZoomIn, ZoomOut } from 'lucide-react-native';
+import { BookOpen, FileText, ZoomIn, ZoomOut, ChevronLeft } from 'lucide-react-native';
 import Markdown from 'react-native-markdown-display';
 
 export default function ReaderScreen() {
-  const { id } = useLocalSearchParams();
+  const router = useRouter();
+  const { id, anchor } = useLocalSearchParams();
   const { books } = useLibrary();
+  const scrollViewRef = useRef<ScrollView>(null);
+  const yOffsets = useRef<Record<string, number>>({});
   const book = books.find(b => b.id === id);
 
   const [totalPages, setTotalPages] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
-  const [isReadingMode, setIsReadingMode] = useState(false);
+  const [isReadingMode, setIsReadingMode] = useState(!!anchor);
 
   // Responsive Text Engine Values
   const [fontSizeMultiplier, setFontSizeMultiplier] = useState(1);
@@ -22,22 +25,68 @@ export default function ReaderScreen() {
 
   if (!book) {
     return (
-      <View style={styles.center}>
-        <Text style={{ color: '#fff' }}>Book not found.</Text>
+      <View style={[styles.container, { paddingTop: 60, paddingHorizontal: 16 }]}>
+        <Pressable onPress={() => router.back()} style={{ marginBottom: 24, alignSelf: 'flex-start' }}>
+          <ChevronLeft color="#fff" size={28} />
+        </Pressable>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <Text style={{ color: '#fff', fontSize: 18 }}>Book not found in active session.</Text>
+          <Text style={{ color: '#888', marginTop: 8 }}>Please delete and re-upload the PDF to restore state.</Text>
+        </View>
       </View>
     );
   }
 
+  // Jump from Original PDF to Reader Mode
+  useEffect(() => {
+    if (isReadingMode && book.page_anchors) {
+      const targetAnchor = book.page_anchors[currentPage.toString()];
+      if (targetAnchor && yOffsets.current[targetAnchor] !== undefined) {
+        setTimeout(() => {
+          scrollViewRef.current?.scrollTo({ y: yOffsets.current[targetAnchor], animated: false });
+        }, 300);
+      }
+    }
+  }, [isReadingMode]);
+
+  // Jump from Reader Mode dragging to Original PDF Page
+  const handleScroll = (event: any) => {
+    if (!isReadingMode || !book.page_anchors) return;
+    const currentY = event.nativeEvent.contentOffset.y;
+    
+    let closestPage = currentPage;
+    let minDiff = Infinity;
+
+    for (const [page, anchorText] of Object.entries(book.page_anchors)) {
+        const anchorY = yOffsets.current[anchorText];
+        if (anchorY !== undefined) {
+           const diff = Math.abs(anchorY - currentY);
+           if (diff < minDiff) {
+               minDiff = diff;
+               closestPage = parseInt(page);
+           }
+        }
+    }
+    if (closestPage !== currentPage) {
+      setCurrentPage(closestPage);
+    }
+  };
+
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: 60 }]}>
         <View style={styles.headerLeft}>
-          <Text style={styles.title} numberOfLines={1}>{book.title}</Text>
-          {!isReadingMode && (
-            <Text style={styles.pageTracker}>
-              Page {currentPage} of {totalPages || '?'}
-            </Text>
-          )}
+          <Pressable onPress={() => router.back()} style={{ paddingRight: 12 }}>
+            <ChevronLeft color="#fff" size={28} />
+          </Pressable>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.title} numberOfLines={1}>{book.title}</Text>
+            {!isReadingMode && (
+              <Text style={styles.pageTracker}>
+                Page {currentPage} of {totalPages || '?'}
+              </Text>
+            )}
+          </View>
         </View>
 
         <View style={styles.headerRight}>
@@ -68,7 +117,7 @@ export default function ReaderScreen() {
               <BookOpen color="#fff" size={20} />
             )}
             <Text style={styles.modeToggleText}>
-              {isReadingMode ? "Original" : "Feed"}
+              {isReadingMode ? "Original" : "Reader"}
             </Text>
           </Pressable>
         </View>
@@ -76,9 +125,43 @@ export default function ReaderScreen() {
 
       {isReadingMode ? (
         <View style={styles.responsiveReaderCanvas}>
-          <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <ScrollView 
+            ref={scrollViewRef} 
+            contentContainerStyle={styles.scrollContent} 
+            showsVerticalScrollIndicator={false}
+            onScroll={handleScroll}
+            scrollEventThrottle={100}
+          >
             <Markdown 
               rules={{
+                paragraph: (node, children, parent, styles) => {
+                  const rawText = node.content;
+                  return (
+                    <View 
+                      key={node.key} 
+                      onLayout={(e) => {
+                        const y = e.nativeEvent.layout.y;
+                        if (rawText) {
+                            // Extract signature footprint spanning first 30 chars
+                            const chunk = rawText.substring(0, 30).trim();
+                            yOffsets.current[chunk] = y;
+                            
+                            // Native UI feed anchor routing support
+                            if (typeof anchor === 'string') {
+                                if (rawText.startsWith(anchor) || rawText.includes(anchor)) {
+                                    setTimeout(() => {
+                                      scrollViewRef.current?.scrollTo({ y, animated: true });
+                                    }, 100);
+                                }
+                            }
+                        }
+                      }}
+                      style={{ marginBottom: 16 }}
+                    >
+                      {children}
+                    </View>
+                  );
+                },
                 image: (node, children, parent, styles) => {
                   return (
                     <Image
@@ -120,6 +203,7 @@ export default function ReaderScreen() {
         </View>
       ) : (
         <Pdf
+          page={currentPage}
           source={{ uri: book.uri, cache: true }}
           onLoadComplete={(numberOfPages) => setTotalPages(numberOfPages)}
           onPageChanged={(page) => setCurrentPage(page)}
@@ -154,7 +238,10 @@ const styles = StyleSheet.create({
     borderBottomColor: '#222'
   },
   headerLeft: {
-    maxWidth: '45%'
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingRight: 16
   },
   headerRight: {
     flexDirection: 'row',

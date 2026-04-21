@@ -18,9 +18,8 @@ export default function RootLayout() {
             headerTitleStyle: { fontWeight: 'bold' },
           }}
         >
-          <Stack.Screen name="index" options={{ title: 'Library' }} />
-          <Stack.Screen name="reader" options={{ title: 'Reader' }} />
-          <Stack.Screen name="feed" options={{ title: 'Feed' }} />
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="reader" options={{ presentation: 'fullScreenModal', headerShown: false }} />
         </Stack>
         <StatusBar style="light" />
       </LibraryProvider>

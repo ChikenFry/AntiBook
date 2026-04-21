@@ -46,3 +46,7 @@ app-example
 backend/venv/
 backend/__pycache__/
 *.pyc
+.env
+*.db
+*.pdf
+backend/feed.db
