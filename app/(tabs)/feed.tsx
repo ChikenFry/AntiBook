@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, Dimensions, ActivityIndicator, Pressable, ScrollView } from 'react-native';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import Carousel from 'react-native-reanimated-carousel';
+import { View, Text, StyleSheet, Dimensions, ActivityIndicator, Pressable, ScrollView, FlatList } from 'react-native';
 import { useRouter } from 'expo-router';
 
 const { width, height } = Dimensions.get('window');
@@ -44,58 +42,58 @@ export default function FeedScreen() {
     )
   }
 
-  const renderInnerSlide = ({ item }: { item: any }) => {
-    return (
-      <Carousel
-        width={width}
-        height={height - 160}
-        data={[
-          { type: 'hook', text: item.hook },
-          { type: 'paragraph', text: item.paragraph, paragraph_id: item.paragraph_id, book_id: item.book_id }
-        ]}
-        scrollAnimationDuration={500}
-        renderItem={({ item: slideItem }) => (
-          <View style={styles.slideContainer}>
-             {slideItem.type === 'hook' ? (
-                <View style={styles.hookWrapper}>
-                   <Text style={styles.hookLabel}>SWIPE FOR CONTEXT ➡️</Text>
-                   <Text style={styles.hookText}>"{slideItem.text}"</Text>
-                </View>
-             ) : (
-                <View style={styles.paragraphWrapper}>
-                  <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
-                    <Text style={styles.paragraphText}>{slideItem.text}</Text>
-                  </ScrollView>
-                  <Pressable 
-                    style={styles.readMoreBtn}
-                    onPress={() => router.push({ pathname: '/reader', params: { id: slideItem.book_id, paragraph_id: slideItem.paragraph_id }})}
-                  >
-                     <Text style={styles.readMoreText}>Read More in Book</Text>
-                  </Pressable>
-                </View>
-             )}
-          </View>
-        )}
-        panGestureHandlerProps={{
-          activeOffsetY: [-10, 10],
-          failOffsetX: [-10, 10],
-        }}
-      />
-    );
-  };
+  const renderFeedItem = ({ item }: { item: any }) => (
+    // Horizontal ScrollView for hook → paragraph swiping.
+    // Being a native scroll component, it only intercepts horizontal gestures,
+    // allowing the outer vertical FlatList to freely handle up/down swipes.
+    <ScrollView
+      horizontal
+      pagingEnabled
+      showsHorizontalScrollIndicator={false}
+      style={{ width, height: height - 160 }}
+    >
+      {/* Slide 1: Hook */}
+      <View style={[styles.slideContainer, { width }]}>
+        <View style={styles.hookWrapper}>
+          <Text style={styles.hookLabel}>SWIPE FOR CONTEXT ➡️</Text>
+          <Text style={styles.hookText}>"{item.hook}"</Text>
+        </View>
+      </View>
+
+      {/* Slide 2: Paragraph + Read More */}
+      <View style={[styles.slideContainer, { width }]}>
+        <View style={styles.paragraphWrapper}>
+          <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
+            <Text style={styles.paragraphText}>{item.paragraph}</Text>
+          </ScrollView>
+          <Pressable
+            style={styles.readMoreBtn}
+            onPress={() => router.push({ pathname: '/reader', params: { id: item.book_id, paragraph_id: item.paragraph_id } })}
+          >
+            <Text style={styles.readMoreText}>Read More in Book</Text>
+          </Pressable>
+        </View>
+      </View>
+    </ScrollView>
+  );
 
   return (
-    <GestureHandlerRootView style={styles.container}>
-      <Carousel
-        loop={false}
-        vertical
-        width={width}
-        height={height - 160}
-        data={[...feed].reverse()}
-        scrollAnimationDuration={500}
-        renderItem={renderInnerSlide}
-      />
-    </GestureHandlerRootView>
+    // Native FlatList with pagingEnabled for vertical feed scrolling.
+    // Using a native component (instead of gesture-handler-based Carousel)
+    // eliminates gesture conflicts with the inner horizontal ScrollView.
+    <FlatList
+      data={[...feed].reverse()}
+      keyExtractor={(item) => String(item.id)}
+      renderItem={renderFeedItem}
+      pagingEnabled
+      showsVerticalScrollIndicator={false}
+      style={styles.container}
+      getItemLayout={(_, index) => ({
+        length: height - 160,
+        offset: (height - 160) * index,
+        index,
+      })}
+    />
   );
 }
 
