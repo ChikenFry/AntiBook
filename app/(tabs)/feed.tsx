@@ -44,39 +44,41 @@ export default function FeedScreen() {
     )
   }
 
-  const renderInnerSlide = ({ item }: { item: any }) => {
+  const renderFeedItem = ({ item }: { item: any }) => {
     return (
-      <Carousel
-        width={width}
-        height={height - 160}
-        data={[
-          { type: 'hook', text: item.hook },
-          { type: 'paragraph', text: item.paragraph, anchor: item.anchor_text, book_id: item.book_id }
-        ]}
-        scrollAnimationDuration={500}
-        renderItem={({ item: slideItem }) => (
-          <View style={styles.slideContainer}>
-             {slideItem.type === 'hook' ? (
-                <View style={styles.hookWrapper}>
-                   <Text style={styles.hookLabel}>SWIPE FOR CONTEXT ➡️</Text>
-                   <Text style={styles.hookText}>"{slideItem.text}"</Text>
-                </View>
-             ) : (
-                <View style={styles.paragraphWrapper}>
-                  <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
-                    <Text style={styles.paragraphText}>{slideItem.text}</Text>
-                  </ScrollView>
-                  <Pressable 
-                    style={styles.readMoreBtn}
-                    onPress={() => router.push({ pathname: '/reader', params: { id: slideItem.book_id, anchor: slideItem.anchor }})}
-                  >
-                     <Text style={styles.readMoreText}>Read More in Book</Text>
-                  </Pressable>
-                </View>
-             )}
+      // Horizontal paging ScrollView replaces the inner Carousel.
+      // A plain ScrollView only claims horizontal swipe gestures, so the
+      // outer vertical Carousel can freely handle up/down swipes.
+      <ScrollView
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        scrollEventThrottle={16}
+        style={{ width, height: height - 160 }}
+      >
+        {/* Slide 1: Hook */}
+        <View style={[styles.slideContainer, { width }]}>
+          <View style={styles.hookWrapper}>
+            <Text style={styles.hookLabel}>SWIPE FOR CONTEXT ➡️</Text>
+            <Text style={styles.hookText}>"{item.hook}"</Text>
           </View>
-        )}
-      />
+        </View>
+
+        {/* Slide 2: Paragraph + Read More */}
+        <View style={[styles.slideContainer, { width }]}>
+          <View style={styles.paragraphWrapper}>
+            <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
+              <Text style={styles.paragraphText}>{item.paragraph}</Text>
+            </ScrollView>
+            <Pressable
+              style={styles.readMoreBtn}
+              onPress={() => router.push({ pathname: '/reader', params: { id: item.book_id, anchor: item.anchor_text } })}
+            >
+              <Text style={styles.readMoreText}>Read More in Book</Text>
+            </Pressable>
+          </View>
+        </View>
+      </ScrollView>
     );
   };
 
@@ -89,7 +91,7 @@ export default function FeedScreen() {
         height={height - 160}
         data={[...feed].reverse()}
         scrollAnimationDuration={500}
-        renderItem={renderInnerSlide}
+        renderItem={renderFeedItem}
       />
     </GestureHandlerRootView>
   );
