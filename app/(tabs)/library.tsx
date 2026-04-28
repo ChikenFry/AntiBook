@@ -2,12 +2,12 @@ import React from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
-import { Plus, BookOpen } from 'lucide-react-native';
+import { Plus, BookOpen, Trash2 } from 'lucide-react-native';
 import { useLibrary } from '../../lib/LibraryContext';
 
 export default function LibraryScreen() {
   const router = useRouter();
-  const { books, addBook, updateBookText } = useLibrary();
+  const { books, addBook, updateBookText, removeBook } = useLibrary();
   const [loading, setLoading] = React.useState(false);
 
   const handleUpload = async () => {
@@ -65,6 +65,28 @@ export default function LibraryScreen() {
     }
   };
 
+  const handleDelete = (id: string) => {
+    Alert.alert(
+      "Delete Book",
+      "Are you sure you want to delete this book and its hooks?",
+      [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Delete", 
+          style: "destructive",
+          onPress: async () => {
+            removeBook(id);
+            try {
+              await fetch(`http://localhost:8000/book/${id}`, { method: 'DELETE' });
+            } catch (err) {
+              console.error("Error deleting book from backend:", err);
+            }
+          }
+        }
+      ]
+    );
+  };
+
   const renderBook = ({ item }: { item: any }) => (
     <View style={styles.bookCard}>
       <View style={styles.bookInfo}>
@@ -80,6 +102,13 @@ export default function LibraryScreen() {
         >
           <BookOpen color="#fff" size={16} />
           <Text style={styles.miniBtnText}>Read</Text>
+        </Pressable>
+        <Pressable 
+          style={[styles.miniBtn, styles.deleteBtn]}
+          onPress={() => handleDelete(item.id)}
+        >
+          <Trash2 color="#ff4444" size={16} />
+          <Text style={styles.deleteBtnText}>Delete</Text>
         </Pressable>
       </View>
     </View>
@@ -170,6 +199,13 @@ const styles = StyleSheet.create({
   },
   miniBtnDisabled: {
     opacity: 0.5,
+  },
+  deleteBtn: {
+    backgroundColor: '#2a1111',
+  },
+  deleteBtnText: {
+    color: '#ff4444',
+    fontWeight: '600',
   },
   emptyState: {
     flex: 1,

@@ -68,7 +68,7 @@ export default function FeedScreen() {
           </ScrollView>
           <Pressable
             style={styles.readMoreBtn}
-            onPress={() => router.push({ pathname: '/reader', params: { id: item.book_id, paragraph_id: item.paragraph_id } })}
+            onPress={() => router.push({ pathname: '/reader', params: { id: item.book_id, page: item.paragraph_id } })}
           >
             <Text style={styles.readMoreText}>Read More in Book</Text>
           </Pressable>

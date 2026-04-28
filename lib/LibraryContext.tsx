@@ -12,12 +12,14 @@ type LibraryContextType = {
   books: Book[];
   addBook: (book: Book) => void;
   updateBookText: (id: string, text: string, page_anchors?: Record<string, string>) => void;
+  removeBook: (id: string) => void;
 };
 
 const LibraryContext = createContext<LibraryContextType>({
   books: [],
   addBook: () => {},
   updateBookText: () => {},
+  removeBook: () => {},
 });
 
 export const useLibrary = () => useContext(LibraryContext);
@@ -35,8 +37,12 @@ export const LibraryProvider = ({ children }: { children: ReactNode }) => {
     );
   };
 
+  const removeBook = (id: string) => {
+    setBooks(prev => prev.filter(b => b.id !== id));
+  };
+
   return (
-    <LibraryContext.Provider value={{ books, addBook, updateBookText }}>
+    <LibraryContext.Provider value={{ books, addBook, updateBookText, removeBook }}>
       {children}
     </LibraryContext.Provider>
   );

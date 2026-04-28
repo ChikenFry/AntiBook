@@ -38,48 +38,67 @@ converter = DocumentConverter(
     }
 )
 
-def internalHeuristicGenerator(paragraph: str, paragraph_id: str):
+def internalHeuristicGenerator(book_paragraphs: list, book_id: str, max_page: int):
     """
     Standardized Internal Heuristic Generator: Extracts the best sentence based on scoring logic.
     """
-    # Simple sentence splitter: look for ., ! or ? followed by space or newline
-    sentences = re.split(r'(?<=[.!?])\s+', paragraph)
-    if not sentences:
-        return {"hook": paragraph[:100], "paragraph": paragraph, "paragraph_id": paragraph_id}
+    if not book_paragraphs:
+        return []
         
-    best_sentence = sentences[0]
-    max_score = -1
+    # Filter: middle pages (avoid first 10% and last 10%)
+    min_p = max(1, int(max_page * 0.1))
+    max_p = int(max_page * 0.9)
     
-    keywords = ['secret', 'imagine', 'true', 'reasons', 'impossible', 'truth', 'revelation', 'unexpected', 'hidden']
+    candidates = []
+    for p in book_paragraphs:
+        if min_p <= p["page_no"] <= max_p:
+            if len(p["text"].split()) > 50:
+                candidates.append(p)
+                
+    if not candidates:
+        # Fallback if book is too short
+        candidates = [p for p in book_paragraphs if len(p["text"].split()) > 20]
+        if not candidates:
+            candidates = book_paragraphs
+            
+    import random
+    import re
+    # Take random 5
+    selected = random.sample(candidates, min(5, len(candidates)))
     
-    for sentence in sentences:
-        score = 0
-        if '?' in sentence:
-            score += 10
-        if '!' in sentence:
-            score += 5
+    data = []
+    for p in selected:
+        sentences = re.split(r'(?<=[.!?])\s+', p["text"])
+        if not sentences:
+            sentences = [p["text"]]
         
-        words = sentence.split()
-        if 8 <= len(words) <= 20:
-            score += 5
+        # Pick a random line/sentence that isn't too short
+        valid_sentences = [s for s in sentences if len(s.split()) > 4]
+        if not valid_sentences:
+            valid_sentences = sentences
             
-        lower_sentence = sentence.lower()
-        if any(kw in lower_sentence for kw in keywords):
-            score += 3
-            
-        # Default: If no score (all -1 or 0), first sentence remains best
-        if score > max_score:
-            max_score = score
-            best_sentence = sentence
-            
-    return {
-        "hook": best_sentence.strip(),
-        "paragraph": paragraph.strip(),
-        "paragraph_id": paragraph_id
-    }
+        hook_text = random.choice(valid_sentences).strip()
+        data.append({
+            "hook": hook_text,
+            "paragraph": p["text"].strip(),
+            "paragraph_id": str(p["page_no"])
+        })
+    return data
 
-def generate_hooks_bg(book_id: str, markdown_text: str):
+def generate_hooks_bg(book_id: str, markdown_text: str, book_paragraphs: list, max_page: int):
     print(f"Starting Background AI Parsing for {book_id}...")
+    
+    # 1. Delete old hooks for this book
+    try:
+        conn = sqlite3.connect('feed.db')
+        c = conn.cursor()
+        c.execute('DELETE FROM feed_hooks WHERE book_id = ?', (book_id,))
+        conn.commit()
+        conn.close()
+        print(f"Deleted old hooks for {book_id}")
+    except Exception as e:
+        print("Error deleting old hooks:", e)
+        
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         print("No GEMINI_API_KEY found, skipping background feed generation.")
@@ -149,19 +168,7 @@ Text:
         # Step B: Fallback - If API call fails, immediate call internalHeuristicGenerator
         if not success:
             print("Executing Step B: Graceful Degradation to Internal Heuristic Generator...")
-            # Split markdown into paragraphs (double newline)
-            paragraphs = [p.strip() for p in markdown_text.split('\n\n') if len(p.strip()) > 50]
-            # Take top 5 candidates for variety
-            candidates = paragraphs[:5]
-            data = []
-            for p in candidates:
-                result = internalHeuristicGenerator(p, book_id)
-                # Format for DB consistency using unified schema
-                data.append({
-                    "hook": result["hook"],
-                    "paragraph": result["paragraph"],
-                    "paragraph_id": result["paragraph"][:30].strip()
-                })
+            data = internalHeuristicGenerator(book_paragraphs, book_id, max_page)
             print(f"Step B Success: Generated {len(data)} heuristic hooks.")
 
         # Step C: Persistence - Save outcomes into the FeedHooks collection using a unified JSON schema
@@ -196,17 +203,46 @@ async def extract_pdf(background_tasks: BackgroundTasks, book_id: str = Form(...
         
         page_anchors = {}
         try:
+            # 1. Find max page
+            max_page = 1
+            for item, level in result.document.iterate_items():
+                if hasattr(item, "prov") and item.prov and len(item.prov) > 0:
+                    max_page = max(max_page, item.prov[0].page_no)
+
+            # 2. Map pages to starting paragraph index
+            temp_anchors = {}
+            book_paragraphs = []
+            paragraph_idx = 0
+            import re
             for item, level in result.document.iterate_items():
                 if hasattr(item, "text") and item.text:
                     if hasattr(item, "prov") and item.prov and len(item.prov) > 0:
                         page_no = item.prov[0].page_no
-                        if str(page_no) not in page_anchors:
-                            page_anchors[str(page_no)] = item.text[:30].strip()
-        except:
-            pass
+                        if page_no not in temp_anchors:
+                            temp_anchors[page_no] = paragraph_idx
+                        book_paragraphs.append({
+                            "text": item.text,
+                            "page_no": page_no
+                        })
+                    
+                    # Accurately simulate markdown parser splitting
+                    blocks = re.split(r'\n\s*\n', item.text.strip())
+                    num_blocks = len([b for b in blocks if b.strip()])
+                    paragraph_idx += max(1, num_blocks)
+
+            # 3. Fill page_anchors including blank pages
+            last_idx = 0
+            for i in range(1, max_page + 1):
+                if i in temp_anchors:
+                    last_idx = temp_anchors[i]
+                page_anchors[str(i)] = last_idx
+        except Exception as e:
+            max_page = 1
+            book_paragraphs = []
+            print("Anchor generation error:", e)
             
         # Dispatch AI thread to not block the reader
-        background_tasks.add_task(generate_hooks_bg, book_id, md_text)
+        background_tasks.add_task(generate_hooks_bg, book_id, md_text, book_paragraphs, max_page)
         
     except Exception as e:
         md_text = f"Docling Extraction Error: {e}"
@@ -231,3 +267,15 @@ def get_feed():
             "paragraph": dict(r).get("paragraph", "Content unavailable."),
             "paragraph_id": dict(r).get("paragraph_id")
         } for r in rows]
+
+@app.delete("/book/{book_id}")
+def delete_book(book_id: str):
+    try:
+        conn = sqlite3.connect('feed.db')
+        c = conn.cursor()
+        c.execute('DELETE FROM feed_hooks WHERE book_id = ?', (book_id,))
+        conn.commit()
+        conn.close()
+        return {"status": "success"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
