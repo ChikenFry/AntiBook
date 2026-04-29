@@ -29,6 +29,13 @@ export default function ReaderScreen() {
   const currentSize = baseFontSize * fontSizeMultiplier;
 
   useEffect(() => {
+    if (isReadingMode) {
+      paragraphCounterRef.current = 0;
+      yOffsets.current = {};
+    }
+  }, [isReadingMode]);
+
+  useEffect(() => {
     console.log(`[ReaderScreen] useEffect: isReadingMode=${isReadingMode}`);
     if (!isReadingMode || !pageAnchors) return;
     // Only set anchor if we don't already have a pending one
@@ -190,10 +197,7 @@ export default function ReaderScreen() {
 
       {isReadingMode ? (
         <View style={styles.responsiveReaderCanvas}>
-          {(() => {
-            paragraphCounterRef.current = 0;
-            return (
-              <ScrollView 
+          <ScrollView 
                 ref={scrollViewRef} 
                 contentContainerStyle={styles.scrollContent} 
                 showsVerticalScrollIndicator={false}
@@ -280,8 +284,6 @@ export default function ReaderScreen() {
               {book.text || "Loading markdown..."}
             </Markdown>
           </ScrollView>
-            );
-          })()}
         </View>
       ) : (
         <Pdf
