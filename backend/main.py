@@ -212,6 +212,7 @@ async def extract_pdf(background_tasks: BackgroundTasks, book_id: str = Form(...
 
             # 2. Inject Page Markers into md_text
             page_markers = []
+            marked_pages = set()
             book_paragraphs = []
             for item, level in result.document.iterate_items():
                 # Skip headings, list items, tables, pictures — they don't become paragraphs
@@ -221,17 +222,25 @@ async def extract_pdf(background_tasks: BackgroundTasks, book_id: str = Form(...
                 if hasattr(item, "text") and item.text and item.text.strip():
                     if hasattr(item, "prov") and item.prov and len(item.prov) > 0:
                         page_no = item.prov[0].page_no
-                        
-                        if not any(m['page_no'] == page_no for m in page_markers):
-                            first_text = item.text.strip()[:60]
-                            offset = md_text.find(first_text)
-                            if offset != -1:
-                                page_markers.append({"page_no": page_no, "offset": offset})
 
                         book_paragraphs.append({
                             "text": item.text,
                             "page_no": page_no
                         })
+
+                        if page_no not in marked_pages:
+                            # Try decreasing substring lengths — Docling's markdown export
+                            # may escape or reformat characters, so shorter substrings are
+                            # more likely to match verbatim.
+                            raw = item.text.strip()
+                            for length in [60, 40, 20, 10]:
+                                if length > len(raw):
+                                    continue
+                                offset = md_text.find(raw[:length])
+                                if offset != -1:
+                                    page_markers.append({"page_no": page_no, "offset": offset})
+                                    marked_pages.add(page_no)
+                                    break
 
             # Sort markers descending so string injection doesn't mess up subsequent offsets
             page_markers.sort(key=lambda x: x["offset"], reverse=True)

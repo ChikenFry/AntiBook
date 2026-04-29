@@ -1,7 +1,7 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { BookOpen, ChevronLeft, FileText, ZoomIn, ZoomOut } from 'lucide-react-native';
 import React, { useEffect, useRef, useState } from 'react';
-import { Dimensions, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Dimensions, findNodeHandle, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Markdown from 'react-native-markdown-display';
 import Pdf from 'react-native-pdf';
 import { useLibrary } from '../lib/LibraryContext';
@@ -12,6 +12,8 @@ export default function ReaderScreen() {
   const { books } = useLibrary();
   const scrollViewRef = useRef<ScrollView>(null);
   const yOffsets = useRef<Record<string, number>>({});
+  const pageViewRefs = useRef<Record<string, View | null>>({});
+  const totalContentHeightRef = useRef(0);
   const pendingReaderAnchorRef = useRef<string | null>(null);
   const hasScrolledToAnchorRef = useRef(false);
   const contentSizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -38,32 +40,35 @@ export default function ReaderScreen() {
     }
     const targetNum = parseInt(target, 10);
     const pages = Object.keys(yOffsets.current).map(Number).filter(n => !isNaN(n));
-    if (!pages.length) return;
-    const closest = pages.reduce((a, b) => (Math.abs(b - targetNum) < Math.abs(a - targetNum) ? b : a));
-    const closestY = yOffsets.current[String(closest)];
-    if (closestY !== undefined) {
+    if (pages.length) {
+      const closest = pages.reduce((a, b) => (Math.abs(b - targetNum) < Math.abs(a - targetNum) ? b : a));
+      const closestY = yOffsets.current[String(closest)];
+      if (closestY !== undefined) {
+        pendingReaderAnchorRef.current = null;
+        scrollViewRef.current?.scrollTo({ y: closestY, animated: false });
+        return;
+      }
+    }
+    // Last resort: estimate position by page ratio
+    if (totalContentHeightRef.current > 0 && totalPages > 0) {
+      const ratio = (targetNum - 1) / totalPages;
       pendingReaderAnchorRef.current = null;
-      scrollViewRef.current?.scrollTo({ y: closestY, animated: false });
+      scrollViewRef.current?.scrollTo({ y: totalContentHeightRef.current * ratio, animated: false });
     }
   };
 
   // onContentSizeChange fires after ALL child onLayout events, so yOffsets is fully
   // populated and the ScrollView knows its total height — the right moment to scroll.
-  const handleContentSizeChange = () => {
+  const handleContentSizeChange = (_w: number, h: number) => {
+    if (h > 0) totalContentHeightRef.current = h;
     if (!pendingReaderAnchorRef.current) return;
     if (contentSizeTimerRef.current) clearTimeout(contentSizeTimerRef.current);
-    // Small debounce: onContentSizeChange can fire multiple times as images decode.
+    // Small debounce: onContentSizeChange fires multiple times as images decode.
     contentSizeTimerRef.current = setTimeout(() => {
       if (!pendingReaderAnchorRef.current) return;
       performScrollToPage(pendingReaderAnchorRef.current);
     }, 80);
   };
-
-  useEffect(() => {
-    if (isReadingMode) {
-      yOffsets.current = {};
-    }
-  }, [isReadingMode]);
 
   // Safety net: fires 1 s after entering reader mode in case onContentSizeChange
   // never triggers (e.g. the book text was already cached and no size change fires).
@@ -96,9 +101,11 @@ export default function ReaderScreen() {
 
     if (nextMode) {
       yOffsets.current = {};
+      pageViewRefs.current = {};
+      totalContentHeightRef.current = 0;
       console.log(`[ReaderScreen] Toggle Mode setting pendingReaderAnchorRef to page:`, currentPage);
       pendingReaderAnchorRef.current = currentPage.toString();
-      hasScrolledToAnchorRef.current = false; // reset scroll flag
+      hasScrolledToAnchorRef.current = false;
     } else {
       console.log(`[ReaderScreen] Toggle Mode clearing pendingReaderAnchorRef.`);
       pendingReaderAnchorRef.current = null;
@@ -213,10 +220,18 @@ export default function ReaderScreen() {
                       if (pageMatch) {
                           const pNo = pageMatch[1];
                           return (
-                            <View 
+                            <View
                               key={node.key}
-                              onLayout={(e) => {
-                                  yOffsets.current[pNo] = e.nativeEvent.layout.y;
+                              ref={(ref: View | null) => { pageViewRefs.current[pNo] = ref; }}
+                              onLayout={() => {
+                                  requestAnimationFrame(() => {
+                                      const v = pageViewRefs.current[pNo];
+                                      const scrollNode = findNodeHandle(scrollViewRef.current);
+                                      if (!v || !scrollNode) return;
+                                      v.measureLayout(scrollNode as any, (_x, y) => {
+                                          yOffsets.current[pNo] = y;
+                                      }, () => {});
+                                  });
                               }}
                             >
                               <View style={{ marginVertical: 32, alignItems: 'center', opacity: 0.5 }}>
