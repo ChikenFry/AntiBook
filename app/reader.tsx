@@ -14,8 +14,6 @@ export default function ReaderScreen() {
   const yOffsets = useRef<Record<string, number>>({});
   const pendingReaderAnchorRef = useRef<string | null>(null);
   const hasScrolledToAnchorRef = useRef(false);
-  const paragraphCounterRef = useRef<number>(0);
-  const currentParagraphIndexRef = useRef<number>(0);
   const book = books.find(b => b.id === id);
   const pageAnchors = book?.page_anchors;
 
@@ -30,22 +28,28 @@ export default function ReaderScreen() {
 
   useEffect(() => {
     if (isReadingMode) {
-      paragraphCounterRef.current = 0;
       yOffsets.current = {};
     }
   }, [isReadingMode]);
 
+  // Fallback: after layout settles, scroll to the closest available page marker if the
+  // exact marker was never injected (page had only headings/lists/tables, no text paragraphs).
   useEffect(() => {
-    console.log(`[ReaderScreen] useEffect: isReadingMode=${isReadingMode}`);
-    if (!isReadingMode || !pageAnchors) return;
-    // Only set anchor if we don't already have a pending one
-    if (!pendingReaderAnchorRef.current) {
-      const anchor = pageAnchors[currentPage.toString()] ?? null;
-      console.log(`[ReaderScreen] useEffect setting pendingReaderAnchorRef to:`, anchor);
-      pendingReaderAnchorRef.current = anchor !== null ? anchor.toString() : null;
-    } else {
-      console.log(`[ReaderScreen] useEffect keeping existing pendingReaderAnchorRef:`, pendingReaderAnchorRef.current);
-    }
+    if (!isReadingMode) return;
+    const timer = setTimeout(() => {
+      if (hasScrolledToAnchorRef.current || !pendingReaderAnchorRef.current) return;
+      const target = parseInt(pendingReaderAnchorRef.current, 10);
+      const pages = Object.keys(yOffsets.current).map(Number).filter(n => !isNaN(n));
+      if (!pages.length) return;
+      const closest = pages.reduce((a, b) => (Math.abs(b - target) < Math.abs(a - target) ? b : a));
+      const y = yOffsets.current[String(closest)];
+      if (y !== undefined) {
+        hasScrolledToAnchorRef.current = true;
+        pendingReaderAnchorRef.current = null;
+        scrollViewRef.current?.scrollTo({ y, animated: false });
+      }
+    }, 600);
+    return () => clearTimeout(timer);
   }, [isReadingMode]);
 
   if (!book) {
@@ -62,37 +66,14 @@ export default function ReaderScreen() {
     );
   }
 
-  const getAnchorForPage = (pageNumber: number) => {
-    if (!pageAnchors) return null;
-
-    let targetIndex = pageAnchors[pageNumber.toString()];
-    if (typeof targetIndex !== 'number') {
-      targetIndex = parseInt(targetIndex as string, 10);
-    }
-    if (isNaN(targetIndex)) return null;
-
-    return targetIndex.toString();
-  };
-
-  const pIdxToPage = React.useMemo(() => {
-    if (!pageAnchors) return {};
-    const map: Record<number, number[]> = {};
-    for (const [pageStr, pIdx] of Object.entries(pageAnchors)) {
-      const parsedIdx = typeof pIdx === 'number' ? pIdx : parseInt(pIdx as string, 10);
-      if (!map[parsedIdx]) map[parsedIdx] = [];
-      map[parsedIdx].push(parseInt(pageStr, 10));
-    }
-    return map;
-  }, [pageAnchors]);
-
   const handleToggleMode = () => {
     const nextMode = !isReadingMode;
     console.log(`[ReaderScreen] handleToggleMode triggered. Next Mode: ${nextMode ? 'Reader' : 'PDF'}. Current Page: ${currentPage}`);
 
     if (nextMode) {
-      const anchorToSet = getAnchorForPage(currentPage);
-      console.log(`[ReaderScreen] Toggle Mode setting pendingReaderAnchorRef to:`, anchorToSet);
-      pendingReaderAnchorRef.current = anchorToSet !== null ? anchorToSet.toString() : null;
+      yOffsets.current = {};
+      console.log(`[ReaderScreen] Toggle Mode setting pendingReaderAnchorRef to page:`, currentPage);
+      pendingReaderAnchorRef.current = currentPage.toString();
       hasScrolledToAnchorRef.current = false; // reset scroll flag
     } else {
       console.log(`[ReaderScreen] Toggle Mode clearing pendingReaderAnchorRef.`);
@@ -102,31 +83,19 @@ export default function ReaderScreen() {
     setIsReadingMode(nextMode);
   };
 
+
+
   const handleScroll = (event: any) => {
     if (pendingReaderAnchorRef.current) return;
-    if (!isReadingMode || !pageAnchors) return;
+    if (!isReadingMode) return;
     
     const scrollY = event.nativeEvent.contentOffset.y;
     
-    // Find closest paragraph index
-    let closestIndex = 0;
-    let minDiff = Infinity;
-    for (const [indexStr, yPos] of Object.entries(yOffsets.current)) {
-        const diff = Math.abs(yPos - scrollY);
-        if (diff < minDiff) {
-            minDiff = diff;
-            closestIndex = parseInt(indexStr, 10);
-        }
-    }
-    
-    currentParagraphIndexRef.current = closestIndex;
-    
     let bestPage = currentPage;
-    let maxAnchorIdx = -1;
-    for (const [pageStr, pIdx] of Object.entries(pageAnchors)) {
-        const parsedIdx = typeof pIdx === 'number' ? pIdx : parseInt(pIdx as string, 10);
-        if (parsedIdx <= closestIndex && parsedIdx > maxAnchorIdx) {
-            maxAnchorIdx = parsedIdx;
+    let maxY = -1;
+    for (const [pageStr, yPos] of Object.entries(yOffsets.current)) {
+        if (yPos <= scrollY + 100 && yPos > maxY) {
+            maxY = yPos;
             bestPage = parseInt(pageStr, 10);
         }
     }
@@ -158,7 +127,7 @@ export default function ReaderScreen() {
             <View style={styles.fontControls}>
               <Pressable 
                 onPress={() => {
-                  pendingReaderAnchorRef.current = currentParagraphIndexRef.current.toString();
+                  pendingReaderAnchorRef.current = currentPage.toString();
                   hasScrolledToAnchorRef.current = false;
                   setFontSizeMultiplier(prev => Math.max(0.5, prev - 0.2));
                 }}
@@ -168,7 +137,7 @@ export default function ReaderScreen() {
               </Pressable>
               <Pressable 
                 onPress={() => {
-                  pendingReaderAnchorRef.current = currentParagraphIndexRef.current.toString();
+                  pendingReaderAnchorRef.current = currentPage.toString();
                   hasScrolledToAnchorRef.current = false;
                   setFontSizeMultiplier(prev => Math.min(3.0, prev + 0.2));
                 }}
@@ -207,42 +176,46 @@ export default function ReaderScreen() {
                 <Markdown 
                   rules={{
                     paragraph: (node, children, parent, styles) => {
-                      const currentIndex = paragraphCounterRef.current++;
-                      const currentIndexStr = currentIndex.toString();
+                      let rawText = '';
+                      if (node.children && Array.isArray(node.children)) {
+                          rawText = node.children.map((c: any) => c.content || '').join('').trim();
+                      } else if (node.content) {
+                          rawText = node.content.trim();
+                      }
                       
-                      const pages = pIdxToPage[currentIndex];
-                      const pageText = pages ? 
-                          (pages.length > 1 ? `PAGES ${pages[0]}-${pages[pages.length-1]}` : `PAGE ${pages[0]}`) 
-                          : null;
+                      const pageMatch = rawText.match(/\[%%%PAGE_(\d+)%%%\]/);
+                      
+                      if (pageMatch) {
+                          const pNo = pageMatch[1];
+                          return (
+                            <View 
+                              key={node.key}
+                              onLayout={(e) => {
+                                  const y = e.nativeEvent.layout.y;
+                                  yOffsets.current[pNo] = y;
+                                  if (pendingReaderAnchorRef.current === pNo && !hasScrolledToAnchorRef.current) {
+                                      hasScrolledToAnchorRef.current = true;
+                                      pendingReaderAnchorRef.current = null;
+                                      // Defer scroll until after the layout pass commits — calling
+                                      // scrollTo mid-layout is silently dropped on some RN versions.
+                                      requestAnimationFrame(() => {
+                                          scrollViewRef.current?.scrollTo({ y, animated: false });
+                                      });
+                                  }
+                              }}
+                            >
+                              <View style={{ marginVertical: 32, alignItems: 'center', opacity: 0.5 }}>
+                                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700', letterSpacing: 2 }}>
+                                  — PAGE {pNo} —
+                                </Text>
+                              </View>
+                            </View>
+                          );
+                      }
 
                       return (
-                        <View 
-                          key={node.key}
-                          onLayout={(e) => {
-                            const y = e.nativeEvent.layout.y;
-                            yOffsets.current[currentIndexStr] = y;
-
-                            if (!hasScrolledToAnchorRef.current) {
-                              const liveAnchor = pendingReaderAnchorRef.current;
-                              if (liveAnchor === currentIndexStr || anchor === currentIndexStr) {
-                                console.log(`[ReaderScreen] MATCH FOUND! Scrolling to Y: ${y} for index: ${currentIndexStr}`);
-                                hasScrolledToAnchorRef.current = true;
-                                scrollViewRef.current?.scrollTo({ y, animated: false });
-                                pendingReaderAnchorRef.current = null;
-                              }
-                            }
-                          }}
-                        >
-                          {pageText && (
-                            <View style={{ marginVertical: 32, alignItems: 'center', opacity: 0.5 }}>
-                              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700', letterSpacing: 2 }}>
-                                — {pageText} —
-                              </Text>
-                            </View>
-                          )}
-                          <View style={{ marginBottom: 16 }}>
-                            {children}
-                          </View>
+                        <View key={node.key} style={{ marginBottom: 16 }}>
+                          {children}
                         </View>
                       );
                     },

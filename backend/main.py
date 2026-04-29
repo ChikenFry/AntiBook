@@ -11,6 +11,7 @@ from docling.datamodel.base_models import InputFormat
 from docling_core.types.doc.base import ImageRefMode
 from google import genai
 from dotenv import load_dotenv
+from docling.datamodel.document import TextItem, SectionHeaderItem, ListItem, TableItem, PictureItem
 
 load_dotenv("../.env")
 app = FastAPI()
@@ -209,33 +210,38 @@ async def extract_pdf(background_tasks: BackgroundTasks, book_id: str = Form(...
                 if hasattr(item, "prov") and item.prov and len(item.prov) > 0:
                     max_page = max(max_page, item.prov[0].page_no)
 
-            # 2. Map pages to starting paragraph index
-            temp_anchors = {}
+            # 2. Inject Page Markers into md_text
+            page_markers = []
             book_paragraphs = []
-            paragraph_idx = 0
-            import re
             for item, level in result.document.iterate_items():
-                if hasattr(item, "text") and item.text:
+                # Skip headings, list items, tables, pictures — they don't become paragraphs
+                if isinstance(item, (SectionHeaderItem, ListItem, TableItem, PictureItem)):
+                    continue
+
+                if hasattr(item, "text") and item.text and item.text.strip():
                     if hasattr(item, "prov") and item.prov and len(item.prov) > 0:
                         page_no = item.prov[0].page_no
-                        if page_no not in temp_anchors:
-                            temp_anchors[page_no] = paragraph_idx
+                        
+                        if not any(m['page_no'] == page_no for m in page_markers):
+                            first_text = item.text.strip()[:60]
+                            offset = md_text.find(first_text)
+                            if offset != -1:
+                                page_markers.append({"page_no": page_no, "offset": offset})
+
                         book_paragraphs.append({
                             "text": item.text,
                             "page_no": page_no
                         })
-                    
-                    # Accurately simulate markdown parser splitting
-                    blocks = re.split(r'\n\s*\n', item.text.strip())
-                    num_blocks = len([b for b in blocks if b.strip()])
-                    paragraph_idx += max(1, num_blocks)
 
-            # 3. Fill page_anchors including blank pages
-            last_idx = 0
-            for i in range(1, max_page + 1):
-                if i in temp_anchors:
-                    last_idx = temp_anchors[i]
-                page_anchors[str(i)] = last_idx
+            # Sort markers descending so string injection doesn't mess up subsequent offsets
+            page_markers.sort(key=lambda x: x["offset"], reverse=True)
+            for marker in page_markers:
+                offset = marker["offset"]
+                p_no = marker["page_no"]
+                md_text = md_text[:offset] + f"\n\n[%%%PAGE_{p_no}%%%]\n\n" + md_text[offset:]
+
+            # 3. We no longer need page_anchors for the frontend! Keep an empty dict for DB compat.
+            page_anchors = {}
         except Exception as e:
             max_page = 1
             book_paragraphs = []
