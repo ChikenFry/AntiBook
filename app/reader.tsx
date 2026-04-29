@@ -14,6 +14,7 @@ export default function ReaderScreen() {
   const yOffsets = useRef<Record<string, number>>({});
   const pendingReaderAnchorRef = useRef<string | null>(null);
   const hasScrolledToAnchorRef = useRef(false);
+  const contentSizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const book = books.find(b => b.id === id);
   const pageAnchors = book?.page_anchors;
 
@@ -26,29 +27,52 @@ export default function ReaderScreen() {
   const baseFontSize = 16; // reduced for concrete view
   const currentSize = baseFontSize * fontSizeMultiplier;
 
+  // Scroll to the exact page marker, or the closest available one if the exact marker
+  // was not injected (page only had headings/lists/tables, no extractable text paragraphs).
+  const performScrollToPage = (target: string) => {
+    const exactY = yOffsets.current[target];
+    if (exactY !== undefined) {
+      pendingReaderAnchorRef.current = null;
+      scrollViewRef.current?.scrollTo({ y: exactY, animated: false });
+      return;
+    }
+    const targetNum = parseInt(target, 10);
+    const pages = Object.keys(yOffsets.current).map(Number).filter(n => !isNaN(n));
+    if (!pages.length) return;
+    const closest = pages.reduce((a, b) => (Math.abs(b - targetNum) < Math.abs(a - targetNum) ? b : a));
+    const closestY = yOffsets.current[String(closest)];
+    if (closestY !== undefined) {
+      pendingReaderAnchorRef.current = null;
+      scrollViewRef.current?.scrollTo({ y: closestY, animated: false });
+    }
+  };
+
+  // onContentSizeChange fires after ALL child onLayout events, so yOffsets is fully
+  // populated and the ScrollView knows its total height — the right moment to scroll.
+  const handleContentSizeChange = () => {
+    if (!pendingReaderAnchorRef.current) return;
+    if (contentSizeTimerRef.current) clearTimeout(contentSizeTimerRef.current);
+    // Small debounce: onContentSizeChange can fire multiple times as images decode.
+    contentSizeTimerRef.current = setTimeout(() => {
+      if (!pendingReaderAnchorRef.current) return;
+      performScrollToPage(pendingReaderAnchorRef.current);
+    }, 80);
+  };
+
   useEffect(() => {
     if (isReadingMode) {
       yOffsets.current = {};
     }
   }, [isReadingMode]);
 
-  // Fallback: after layout settles, scroll to the closest available page marker if the
-  // exact marker was never injected (page had only headings/lists/tables, no text paragraphs).
+  // Safety net: fires 1 s after entering reader mode in case onContentSizeChange
+  // never triggers (e.g. the book text was already cached and no size change fires).
   useEffect(() => {
     if (!isReadingMode) return;
     const timer = setTimeout(() => {
-      if (hasScrolledToAnchorRef.current || !pendingReaderAnchorRef.current) return;
-      const target = parseInt(pendingReaderAnchorRef.current, 10);
-      const pages = Object.keys(yOffsets.current).map(Number).filter(n => !isNaN(n));
-      if (!pages.length) return;
-      const closest = pages.reduce((a, b) => (Math.abs(b - target) < Math.abs(a - target) ? b : a));
-      const y = yOffsets.current[String(closest)];
-      if (y !== undefined) {
-        hasScrolledToAnchorRef.current = true;
-        pendingReaderAnchorRef.current = null;
-        scrollViewRef.current?.scrollTo({ y, animated: false });
-      }
-    }, 600);
+      if (!pendingReaderAnchorRef.current) return;
+      performScrollToPage(pendingReaderAnchorRef.current);
+    }, 1000);
     return () => clearTimeout(timer);
   }, [isReadingMode]);
 
@@ -166,12 +190,13 @@ export default function ReaderScreen() {
 
       {isReadingMode ? (
         <View style={styles.responsiveReaderCanvas}>
-          <ScrollView 
-                ref={scrollViewRef} 
-                contentContainerStyle={styles.scrollContent} 
+          <ScrollView
+                ref={scrollViewRef}
+                contentContainerStyle={styles.scrollContent}
                 showsVerticalScrollIndicator={false}
                 onScroll={handleScroll}
                 scrollEventThrottle={100}
+                onContentSizeChange={handleContentSizeChange}
               >
                 <Markdown 
                   rules={{
@@ -191,17 +216,7 @@ export default function ReaderScreen() {
                             <View 
                               key={node.key}
                               onLayout={(e) => {
-                                  const y = e.nativeEvent.layout.y;
-                                  yOffsets.current[pNo] = y;
-                                  if (pendingReaderAnchorRef.current === pNo && !hasScrolledToAnchorRef.current) {
-                                      hasScrolledToAnchorRef.current = true;
-                                      pendingReaderAnchorRef.current = null;
-                                      // Defer scroll until after the layout pass commits — calling
-                                      // scrollTo mid-layout is silently dropped on some RN versions.
-                                      requestAnimationFrame(() => {
-                                          scrollViewRef.current?.scrollTo({ y, animated: false });
-                                      });
-                                  }
+                                  yOffsets.current[pNo] = e.nativeEvent.layout.y;
                               }}
                             >
                               <View style={{ marginVertical: 32, alignItems: 'center', opacity: 0.5 }}>
